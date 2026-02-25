@@ -1,0 +1,17 @@
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.vscode/
+
+# Logs
+*.log
+deploy_log.txt
+deploy_error.txt
+deploy_out.txt
+deploy_err.txt
+
+# Keys and Secrets
+.env
+.secrets
