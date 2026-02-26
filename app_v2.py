@@ -26,7 +26,7 @@ except Exception:
 
 MODEL_Flash = "gemini-2.5-flash-lite" 
 MODEL_Pro = "gemini-2.5-flash-lite" 
-MAX_CONTEXT_CHARS = 500_000
+MAX_CONTEXT_CHARS = 5_000_000
 
 # ============================================================
 # 2. PREMIUM CSS: Background, Buttons, Search
