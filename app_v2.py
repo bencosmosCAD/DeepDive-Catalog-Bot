@@ -17,12 +17,21 @@ st.set_page_config(
 )
 
 # API Setup
-API_KEY = "AIzaSyDnK1HyjCbkpn7FJTgpKXAbr479hQAwNHE"
-os.environ["GEMINI_API_KEY"] = API_KEY
-try:
-    genai.configure(api_key=API_KEY)
-except Exception:
-    pass
+API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+# Fallback to Streamlit secrets if not in environment
+if not API_KEY and hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+
+if API_KEY:
+    try:
+        genai.configure(api_key=API_KEY)
+        os.environ["GEMINI_API_KEY"] = API_KEY # Ensure it's in the environment for child processes if needed
+    except Exception as e:
+        print(f"Error configuring genai: {e}")
+        pass
+else:
+    print("WARNING: GEMINI_API_KEY not found in environment or secrets.")
 
 MODEL_Flash = "gemini-2.5-flash-lite" 
 MODEL_Pro = "gemini-2.5-flash-lite" 
