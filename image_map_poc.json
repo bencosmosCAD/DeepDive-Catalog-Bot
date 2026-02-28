@@ -1,0 +1,44 @@
+[
+    {
+        "is_product": true,
+        "product_name": null,
+        "variants_or_choices": [
+            "Evoke 7mm Wetsuit",
+            "Atomic Aquatics B2X Regulator",
+            "Atomic Aquatics BCD"
+        ],
+        "stored_image": "atomic_p1_i0.jpeg"
+    },
+    {
+        "is_product": true,
+        "product_name": "TFX Scuba Regulator First Stage Connector",
+        "variants_or_choices": [],
+        "stored_image": "atomic_p2_i0.jpeg"
+    },
+    {
+        "is_product": true,
+        "product_name": "Atomic Aquatics BCD",
+        "variants_or_choices": [],
+        "stored_image": "atomic_p3_i0.jpeg"
+    },
+    {
+        "is_product": false,
+        "product_name": null,
+        "variants_or_choices": [],
+        "stored_image": "atomic_p3_i2.jpeg"
+    },
+    {
+        "is_product": true,
+        "product_name": null,
+        "variants_or_choices": [],
+        "stored_image": "atomic_p3_i3.jpeg"
+    },
+    {
+        "is_product": true,
+        "product_name": "EZ-LOK Weight Release System",
+        "variants_or_choices": [
+            "10 LBS - 4.5 KG MAXIMUM"
+        ],
+        "stored_image": "atomic_p3_i4.jpeg"
+    }
+]

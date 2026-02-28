@@ -22,15 +22,16 @@ def check_directory(path):
     return False
 
 def check_api_key_in_app():
-    # Since API key is hardcoded in app for now, checking file content
+    # Verify the app has implemented secure API key handling
     try:
         with open("app_v2.py", "r", encoding="utf-8") as f:
             content = f.read()
-            if '"GEMINI_API_KEY"' in content and "AIza" in content:
-                print_status("API Key detected in app code")
+            # check if it tries to fetch from environment or secrets
+            if 'os.environ.get("GEMINI_API_KEY"' in content or 'st.secrets' in content:
+                print_status("Secure API Key Handling detected in app code (env/secrets)")
                 return True
             else:
-                print_status("API Key might be missing or invalid format in app_v2.py", success=False)
+                print_status("API Key handling missing or insecure in app_v2.py", success=False)
                 return False
     except Exception as e:
         print_status(f"Could not read app_v2.py: {e}", success=False)
