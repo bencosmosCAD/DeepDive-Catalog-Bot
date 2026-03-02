@@ -301,30 +301,79 @@ def load_image_map():
 
 IMAGE_MAP = load_image_map()
 
+import re
+
 def find_image_for_product(brand, model_name):
     if not IMAGE_MAP:
         return None
         
-    brand_lower = str(brand).lower() if brand else ""
-    model_lower = str(model_name).lower() if model_name else ""
+    def tokenize(text):
+        return set(re.findall(r'[a-z0-9]+', str(text).lower()))
+        
+    brand_lower = str(brand).lower() if brand is not None else ""
+    model_lower = str(model_name).lower() if model_name is not None else ""
+    model_tokens = tokenize(model_lower)
+    if not model_tokens: 
+        return None
+    
+    best_match = None
+    best_score = 0.0
     
     for entry in IMAGE_MAP:
-        if not entry.get("is_product"): continue
+        if not isinstance(entry, dict) or not entry.get("is_product"): continue
         
         entry_file_brand = str(entry.get("brand_file", "")).lower()
-        entry_name = str(entry.get("product_name", "")).lower()
+        entry_brand = str(entry.get("brand", "")).lower()
         
-        # Check brand match
-        if brand_lower and (brand_lower in entry_file_brand or brand_lower in str(entry.get("brand", "")).lower()):
-            # Check model match
-            if model_lower and (model_lower in entry_name or entry_name in model_lower):
-                return entry.get("stored_image")
+        # Verify brand match
+        b1 = brand_lower in entry_file_brand
+        b2 = brand_lower in entry_brand
+        b3 = bool(entry_brand and entry_brand in brand_lower)
+        b4 = bool(entry_file_brand and entry_file_brand in brand_lower)
+        if not (b1 or b2 or b3 or b4) and brand_lower:
+            continue
             
-            # Check variants list
-            for variant in entry.get("variants", []):
-                if model_lower in str(variant).lower():
-                    return entry.get("stored_image")
-    return None
+        entry_name = str(entry.get("product_name", "")).lower()
+        variants = [str(v).lower() for v in (entry.get("variants") or [])]
+        
+        def calc_score(tokens):
+            if not tokens: return 0
+            overlap = tokens.intersection(model_tokens)
+            if not overlap: return 0
+            
+            # Score heavily based on the character length of the overlapping words 
+            matched_chars = sum(len(w) for w in overlap)
+            unmatched_entry_chars = sum(len(w) for w in (tokens - overlap))
+            unmatched_query_chars = sum(len(w) for w in (model_tokens - overlap))
+            
+            # Heavy penalties for matching pictures that have extra words not in the query (like 'snorkel')
+            # AND heavy penalties if the query is very long but we only matched one generic word.
+            score = (matched_chars * 2.5) - (unmatched_entry_chars * 1.5) - (unmatched_query_chars * 0.5)
+            
+            # Severe penalty for single-word matches on complex queries (e.g. matching 'offshore' to 'Chameleon offshore 2mm lined')
+            if len(overlap) == 1 and len(model_tokens) >= 3:
+                score -= 20.0
+                
+            # Bonus for exact or strong substring matches
+            if entry_name and entry_name == model_lower: score += 10.0
+            elif entry_name and entry_name in model_lower: score += 5.0
+            elif entry_name and model_lower in entry_name: score += 5.0
+            
+            return score
+            
+        name_score = calc_score(tokenize(entry_name))
+        
+        for v in variants:
+            v_score = calc_score(tokenize(v))
+            if v_score > name_score:
+                name_score = v_score
+                
+        # Require a reasonably strong score to prevent totally absurd mappings (e.g. matching just the word 'mask' to a massive query)
+        if name_score > best_score and name_score > 5.0:
+            best_score = name_score
+            best_match = entry.get("stored_image")
+            
+    return best_match
 
 def go_search(query):
     st.session_state.history.append({"role": "user", "content": query})
@@ -464,12 +513,15 @@ def go_search(query):
 # 5. AUTHENTICATION & RENDER PAGES
 # ============================================================
 
+if "site_unlocked" not in st.session_state:
+    st.session_state.site_unlocked = False
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-if not st.session_state.authenticated:
+if not st.session_state.site_unlocked:
     st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
-    st.markdown("<h1>DeepDive Secure Access</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center'>DeepDive Secure Access</h1>", unsafe_allow_html=True)
     st.markdown("<p class='subtitle'>Please enter the client passcode.</p>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -477,10 +529,53 @@ if not st.session_state.authenticated:
         pwd = st.text_input("Passcode", type="password", label_visibility="collapsed", placeholder="Enter Passcode")
         if st.button("UNLOCK", use_container_width=True):
             if pwd == "ROSEBUD2026":
-                st.session_state.authenticated = True
+                st.session_state.site_unlocked = True
                 st.rerun()
             else:
                 st.error("Access Denied. Incorrect Passcode.")
+    st.stop()
+
+if not st.session_state.authenticated:
+    st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center'>DeepDive User Profiles</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitle'>Select a user profile below to experience the application as that persona.</p>", unsafe_allow_html=True)
+    
+    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        with st.container(border=True):
+            st.markdown("<h3 style='text-align:center;'>Retail Customer</h3>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align:center; color:gray;'>Can only view standard RRP. No wholesale pricing visibly exposed.</p>", unsafe_allow_html=True)
+            if st.button("Enter as Retail", use_container_width=True, type="primary"):
+                st.session_state.authenticated = True
+                st.session_state.access_role = "Retail"
+                st.session_state.allowed_tiers = ["RRP"]
+                st.session_state.price_tier = "RRP"
+                st.rerun()
+                
+    with col2:
+        with st.container(border=True):
+            st.markdown("<h3 style='text-align:center;'>B2B Dealer</h3>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align:center; color:gray;'>Can view RRP and standard wholesale Trade pricing.</p>", unsafe_allow_html=True)
+            if st.button("Enter as Dealer", use_container_width=True, type="primary"):
+                st.session_state.authenticated = True
+                st.session_state.access_role = "Dealer"
+                st.session_state.allowed_tiers = ["RRP", "Trade"]
+                st.session_state.price_tier = "RRP"
+                st.rerun()
+                
+    with col3:
+        with st.container(border=True):
+            st.markdown("<h3 style='text-align:center;'>Internal Admin</h3>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align:center; color:gray;'>Full access to all catalog pricing tiers (Partner, Distributor, Promo).</p>", unsafe_allow_html=True)
+            if st.button("Enter as Admin", use_container_width=True, type="primary"):
+                st.session_state.authenticated = True
+                st.session_state.access_role = "Admin"
+                st.session_state.allowed_tiers = ["RRP", "Trade", "Partner", "Distributor", "Promo"]
+                st.session_state.price_tier = "RRP"
+                st.rerun()
+                
     st.stop()
 # Sidebar
 with st.sidebar:
@@ -497,20 +592,35 @@ with st.sidebar:
         help="The sidebar is for settings and cart management only. Use the main chat area for searching.")
     
     st.markdown("---")
-    # Price Tier Selector for Debug/Admin
-    tier_options = ["RRP", "Trade", "Partner", "Distributor", "Promo"]
-    selected_tier = st.selectbox(
-        "Select Price Tier (Affects Cart)", 
-        tier_options, 
-        index=0,
-        help="Choose the pricing level to apply when adding items to the cart."
-    )
-    if selected_tier != st.session_state.get("price_tier"):
-        st.session_state.price_tier = selected_tier
-        st.rerun()
+    
+    # Active Profile Info
+    current_role = st.session_state.get("access_role", "Admin")
+    st.markdown(f"**Current Profile:** {current_role}")
+
+    # Price Tier Selector (Conditionally Rendered based on logged-in role)
+    tier_options = st.session_state.get("allowed_tiers", ["RRP"])
+    if len(tier_options) > 1:
+        current_tier = st.session_state.get("price_tier", "RRP")
+        idx = tier_options.index(current_tier) if current_tier in tier_options else 0
+        selected_tier = st.selectbox(
+            "Select Active Pricing Selection (Cart)", 
+            tier_options, 
+            index=idx,
+            help="Choose the pricing level to apply when adding items to the cart."
+        )
+        if selected_tier != st.session_state.get("price_tier"):
+            st.session_state.price_tier = selected_tier
+            st.rerun()
+    else:
+        # Hide selector for retail users and lock tier to RRP
+        st.session_state.price_tier = tier_options[0]
+        st.caption(f"Price Tier Locked: **{st.session_state.price_tier}**")
     
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-    if st.button("🔄 Reset App", key="sidebar_reset", use_container_width=True, help="Clear current session and start over."):
+    if st.button("🔄 Change Profile (Sign Out)", key="sidebar_logout", use_container_width=True, help="Return to the profile selection screen."):
+        st.session_state.authenticated = False
+        reset()
+    if st.button("🗑️ Clear Search", key="sidebar_reset", use_container_width=True, help="Clear current session and start over."):
         reset()
 
     # Demo Script Viewer
@@ -640,13 +750,160 @@ if st.session_state.page == "home":
             st.image(logo_url, use_container_width=False, width=80) 
             if st.button(f"View {brand}", key=f"btn_{brand}", use_container_width=True):
                 st.session_state.history = []
-                st.session_state.history.append({"role": "user", "content": f"Show me the {brand} catalog."})
-                st.session_state.history.append({
-                    "role": "assistant", 
-                    "content": f"### 📘 **{brand} Catalog**\nI've loaded the {brand} product line. **What are you looking for?**"
-                })
-                st.session_state.page = "chat"
-                st.rerun()
+                # Automatically trigger a real search to populate the grid
+                go_search(f"Please list 5 popular products from the {brand} catalog that I can browse.")
+
+# Product Detail Page
+elif st.session_state.page == "product_detail":
+    c_btn, _ = st.columns([1, 3])
+    with c_btn:
+        if st.button("⬅️ Back to Main Search Screen", type="primary", use_container_width=True):
+            st.session_state.page = "chat"
+            st.rerun()
+        
+    item = st.session_state.get("selected_product", {})
+    img = st.session_state.get("selected_image")
+    
+    st.markdown("---")
+    
+    # 1. Full-width Title & SKU to avoid squeezed typography
+    st.markdown(f"<h1 style='text-align: left; padding-bottom: 10px; font-size: 3.2rem; line-height: 1.2; word-break: keep-all; overflow-wrap: normal;'>{item.get('brand')} {item.get('model')}</h1>", unsafe_allow_html=True)
+    st.markdown(f"**SKU / Identifier:** `{item.get('sku', 'N/A')}`")
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+    
+    has_img = img and os.path.exists(os.path.join("images", img))
+    
+    # 2. Dynamic Layout
+    c1, content_col = st.columns([1, 1.5])
+    with c1:
+        if has_img:
+            st.image(os.path.join("images", img), use_container_width=True)
+        else:
+            # Generate AI image on the fly for missing products
+            clean_brand = str(item.get('brand', 'Scuba')).replace(' ', '%20')
+            clean_model = str(item.get('model', 'Gear')).replace(' ', '%20')
+            ai_image_url = f"https://image.pollinations.ai/prompt/photorealistic%20product%20shot%20of%20{clean_brand}%20{clean_model}%20scuba%20diving%20equipment%20white%20background?nologo=true&width=800&height=800"
+            st.image(ai_image_url, use_container_width=True, caption="✨ AI Generated Visualization")
+            
+    with content_col:
+        st.markdown("### Product Features")
+        st.write(item.get("features", "No features listed."))
+        
+        st.markdown("---")
+        st.markdown("### Pricing Tiers")
+        prices = item.get("prices", {})
+        if not prices: prices = {}
+        
+        allowed_tiers = st.session_state.get('allowed_tiers', ['RRP'])
+        allowed_lower = [t.lower() for t in allowed_tiers]
+        
+        if 'rrp' in allowed_lower:
+            st.write(f"- **RRP:** ${prices.get('rrp') or 0.0:,.2f}")
+        if 'trade' in allowed_lower:
+            st.write(f"- **Trade:** ${prices.get('trade') or 0.0:,.2f}")
+        if 'partner' in allowed_lower:
+            st.write(f"- **Partner:** ${prices.get('partner') or 0.0:,.2f}")
+        if 'distributor' in allowed_lower:
+            st.write(f"- **Distributor:** ${prices.get('distributor') or 0.0:,.2f}")
+        if 'promo' in allowed_lower:
+            st.write(f"- **Promo:** ${prices.get('promo') or 0.0:,.2f}")
+        
+        st.markdown("---")
+        if st.button("🛒 Add to Cart", use_container_width=True):
+            tier = st.session_state.price_tier.lower()
+            price = prices.get(tier) or 0.0
+            cart_item = {
+                "sku": item.get("sku") or f"{item.get('brand')}-{item.get('model')}",
+                "name": f"{item.get('brand')} {item.get('model')}",
+                "price": price,
+                "tier": st.session_state.price_tier,
+                "qty": 1
+            }
+            st.session_state.cart.append(cart_item)
+            st.toast(f"Added {item.get('model')} to cart!", icon="✅")
+            st.session_state.page = "chat"
+            st.rerun()
+
+    # Product specific AI feature
+    st.markdown("---")
+    st.markdown("### 💬 DeepDive AI Product Expert")
+    
+    product_starter_questions = [
+        "What materials is this made of?",
+        "What are the main features of this product?",
+        "Is this suitable for cold water diving?",
+        "How much does this weigh?",
+        "What is the warranty period for this item?",
+        "What colors are available?",
+        "Are there any specific maintenance instructions?",
+        "Does this come with a carrying case or bag?",
+        "How does this compare to earlier models?",
+        "Are there any accessories recommended for this?",
+        "Ask a custom question..."
+    ]
+    
+    # Calculate longest string length to dynamically limit dropdown box width
+    max_q_len = max(len(q) for q in product_starter_questions)
+    # Provide ~80 characters max for 100% width. This ratio scales it intelligently.
+    box_ratio = min((max_q_len + 5) / 80.0, 1.0)
+    
+    if box_ratio < 1.0:
+        c_faq, _ = st.columns([box_ratio, 1.0 - box_ratio])
+    else:
+        c_faq = st.container()
+        
+    with c_faq:
+        selected_question = st.selectbox("Select a frequently asked question from this drop-down list or create your own in this drop-down list.", product_starter_questions, key="product_faq_select")
+        
+        if selected_question == "Ask a custom question...":
+            product_query = st.text_input("Type your custom question here:", placeholder="e.g., Can I replace the battery myself?", key="product_faq_custom")
+        else:
+            product_query = selected_question
+        
+    st.info(f"Want to know the specifics about the {item.get('model', 'item')}? Ask the AI to read the whole PDF manual for you.")
+    
+    with st.container(border=True):
+        st.markdown("#### 🌐 Access Forums")
+        st.caption("Expand the AI's search beyond the official PDF catalogs to include real-world experiences. It will check archives of ScubaBoard and other diving community threads to summarize what actual divers think about this gear.")
+        search_forums = st.toggle("Enable DeepDive Community Insights", value=False, key="toggle_forums")
+    
+    if st.button("Ask Expert 🧠", use_container_width=True, type="primary") and product_query:
+        with st.spinner("Analyzing PDF catalogs and knowledge bases..."):
+             try:
+                 forum_instruction = ""
+                 if search_forums:
+                     forum_instruction = """
+                     IMPORTANT INSTRUCTION: The user has requested to search diving forums for user experiences. 
+                     Since you have vast training parameters that include internet archives, ScubaBoard, and popular diving forums up to your knowledge cutoff, 
+                     you MUST include a dedicated section titled "### 🌐 Community & Forum Insights". 
+                     In this section, summarize the general consensus, user experiences, common praises, and common complaints 
+                     about this specific product based on your broad internet knowledge of the diving community.
+                     """
+
+                 prompt = f"""
+                 You are DeepDive Intelligence Pro, an expert scuba diving gear analyst.
+                 The user is asking a specific question about the following product:
+                 Brand: {item.get('brand')}
+                 Model: {item.get('model')}
+                 
+                 QUESTION: {product_query}
+                 
+                 {forum_instruction}
+                 
+                 First, examine the provided catalog text to find the exact details. 
+                 If the catalog mentions the specific details, quote them directly and then provide a summary.
+                 If it is not in the catalog, provide a highly expert answer based on your general knowledge.
+                 
+                 === CATALOG TEXT ===
+                 {CONTEXT}
+                 === END CATALOG TEXT ===
+                 """
+                 model = genai.GenerativeModel(MODEL_Pro)
+                 response = model.generate_content(prompt)
+                 st.markdown("### 🤖 Expert Answer:")
+                 st.markdown(response.text)
+             except Exception as e:
+                 st.error(f"Error consulting expert: {e}")
 
 # Chat Page
 else:
@@ -678,31 +935,42 @@ else:
                     
                     # Search Database for Matching Image
                     mapped_image = find_image_for_product(item.get('brand'), item.get('model'))
-                    if mapped_image:
-                        img_path = os.path.join("images", mapped_image)
-                        if os.path.exists(img_path):
-                            st.image(img_path, use_container_width=True)
+                    if mapped_image and os.path.exists(os.path.join("images", mapped_image)):
+                        st.image(os.path.join("images", mapped_image), use_container_width=True)
+                    else:
+                         # AI Generate Fallback Image instantly
+                         clean_b = str(item.get('brand', '')).replace(' ', '%20')
+                         clean_m = str(item.get('model', '')).replace(' ', '%20')
+                         gen_url = f"https://image.pollinations.ai/prompt/photorealistic%20{clean_b}%20{clean_m}%20scuba%20diving%20equipment%20white%20background?nologo=true&width=400&height=400"
+                         st.image(gen_url, use_container_width=True)
                             
                     # Price Display
                     prices = item.get('prices', {})
+                    if not prices: prices = {}
                     tier = st.session_state.price_tier.lower()
-                    price = prices.get(tier, 0.0)
+                    price = prices.get(tier) or 0.0
                     
                     st.markdown(f"### ${price:,.2f} <span style='font-size:0.8rem;color:gray'>({st.session_state.price_tier})</span>", unsafe_allow_html=True)
                     st.caption(item.get('features', '')[:100] + "...")
                     
-                    # Add to Cart
-                    if st.button("🛒 Add to Cart", key=f"add_{i}", use_container_width=True):
-                        cart_item = {
-                            "sku": item.get("sku") or f"{item.get('brand')}-{item.get('model')}",
-                            "name": f"{item.get('brand')} {item.get('model')}",
-                            "price": price,
-                            "tier": st.session_state.price_tier,
-                            "qty": 1
-                        }
-                        st.session_state.cart.append(cart_item)
-                        st.toast(f"Added {item.get('model')} to cart!", icon="✅")
+                    # Buttons
+                    if st.button(f"🔍 View Full Details", key=f"det_{i}", use_container_width=True, type="primary"):
+                        st.session_state.selected_product = item
+                        st.session_state.selected_image = mapped_image
+                        st.session_state.page = "product_detail"
                         st.rerun()
+                    
+                    if st.button("🛒 Add to Cart", key=f"add_{i}", use_container_width=True):
+                            cart_item = {
+                                "sku": item.get("sku") or f"{item.get('brand')}-{item.get('model')}",
+                                "name": f"{item.get('brand')} {item.get('model')}",
+                                "price": price,
+                                "tier": st.session_state.price_tier,
+                                "qty": 1
+                            }
+                            st.session_state.cart.append(cart_item)
+                            st.toast(f"Added {item.get('model')} to cart!", icon="✅")
+                            st.rerun()
 
     # Input Area (Styled like Landing Page)
     st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)

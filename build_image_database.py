@@ -21,8 +21,8 @@ def extract_all_catalogs():
         return
 
     genai.configure(api_key=api_key)
-    # Using Gemini 1.5/2.5 Flash for speed and native vision cost-efficiency
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    # Using Gemini 2.5 Pro for advanced native vision capabilities and best quality
+    model = genai.GenerativeModel("gemini-2.5-pro")
 
     data_dir = "data"
     output_dir = "images"
@@ -44,13 +44,18 @@ def extract_all_catalogs():
     
     print(f"Found {len(pdfs)} catalogs to process...")
     
-    for pdf in pdfs:
+    print(f"Total PDFs found: {len(pdfs)} (Skipping previously processed images)\n" + "="*50)
+    
+    total_catalogs = len(pdfs)
+    
+    for cat_num, pdf in enumerate(pdfs, 1):
         brand = pdf.replace(".pdf", "")
         pdf_path = os.path.join(data_dir, pdf)
-        print(f"\n🌊 Processing {brand} Catalog...")
         
         try:
             doc = fitz.open(pdf_path)
+            total_pages = len(doc)
+            print(f"\n[{cat_num}/{total_catalogs}] 🌊 Processing {brand.upper()} Catalog ({total_pages} Pages)...")
         except Exception as e:
             print(f"Error opening {pdf}: {e}")
             continue
@@ -66,25 +71,24 @@ def extract_all_catalogs():
                     image_bytes = base_image["image"]
                     image_ext = base_image["ext"]
                     
-                    # Skip extremely small images (logos, bullets, icons)
                     if len(image_bytes) < 15000: 
                         continue
                         
                     image_filename = f"{brand}_p{page_num+1}_i{img_index}.{image_ext}"
                     
                     if image_filename in processed_images:
-                        continue # Already processed in a previous run
+                        continue 
                         
                     image_filepath = os.path.join(output_dir, image_filename)
                     with open(image_filepath, "wb") as f:
                         f.write(image_bytes)
                         
-                    print(f" -> Analyzing new image: {image_filename}...", end=" ")
+                    print(f"  [P.{page_num+1} | Img {img_index}] 🔍 Sending {len(image_bytes)/1024:.1f}KB image to Gemini...", end=" ", flush=True)
                     
                     image_parts = [{"mime_type": f"image/{image_ext}", "data": image_bytes}]
                     prompt = """
                     Analyze this image from a scuba diving catalog.
-                    Extract the exact Product Name, Model, and any choices/variants (like sizes, colors) visible in charts next to it.
+                    Extract the exact Product Name, Model, and any choices/variants visible.
                     Return ONLY a JSON response in this strict format:
                     {
                         "is_product": true,
@@ -107,9 +111,12 @@ def extract_all_catalogs():
                                 analysis["stored_image"] = image_filename
                                 analysis["brand_file"] = brand
                                 results.append(analysis)
-                                print(f"Identified: {analysis.get('product_name')} ({len(analysis.get('variants', []))} variants)")
                                 
-                                # Incremental save so we don't lose data if script stops
+                                if analysis.get('is_product'):
+                                    print(f"✅ Found: {analysis.get('product_name')} ({len(analysis.get('variants', []))} variants)")
+                                else:
+                                    print("❌ Skipped: No product detected (e.g., Lifestyle Image)")
+                                
                                 with open(map_file, "w") as f:
                                     json.dump(results, f, indent=4)
                                     
@@ -117,24 +124,24 @@ def extract_all_catalogs():
                                 processed_images.add(image_filename)
                                 
                             except json.JSONDecodeError:
-                                print(f"Non-JSON response. Skipping.")
-                                break 
+                                print("⚠️ AI returned unreadable format. Retrying...")
+                                retries -= 1
                                 
                         except ResourceExhausted:
-                            print("\n ⏳ Rate limit reached. Cooling down for 30 seconds...")
-                            time.sleep(30)
-                            retries -= 1
+                            print("\n    ⏳ Auto-Pause: Rate limit reached. Cooling down 60 seconds...", end=" ", flush=True)
+                            time.sleep(60)
+                            print("Resuming...")
                         except Exception as e:
-                            print(f"API Error: {e}")
+                            print(f"\n    ⚠️ API Error: {e}")
                             break
                             
-                    # Small delay to respect standard API limits
-                    time.sleep(1.5) 
+                    time.sleep(2) 
                     
                 except Exception as e:
-                    print(f"\nError extracting image: {e}")
+                    print(f"\n    ⚠️ Error extracting image bytes: {e}")
 
-    print("\n✅ Catalog Image Extraction and Mapping Complete!")
+    print("\n" + "="*50)
+    print("✅ Catalog Image Extraction and Mapping Complete!")
     print(f"Database contains {len(results)} mapped image assets.")
 
 if __name__ == "__main__":

@@ -15,3 +15,4 @@ deploy_err.txt
 # Keys and Secrets
 .env
 .secrets
+.streamlit/secrets.toml
